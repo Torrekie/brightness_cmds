@@ -175,7 +175,6 @@ bool backlight_ctrl(cmdsubopts opt, unsigned long *raw, const char *__nullable d
 						/* Don't get 'uncalMilliNits' and 'value' before we know what they actually do */
 					}
 					if (IODisplayParameters) CFRelease(IODisplayParameters);
-//					if (BrightnessMilliNits) CFRelease(BrightnessMilliNits);
 				} else {
 					verbose(V_DEBUG | V_DBGMSG, "Cannot find AppleARMBacklight, fallback to IOMFB.\n");
 					number = IORegistryEntryCreateCFProperty(service,
@@ -229,6 +228,9 @@ bool backlight_ctrl(cmdsubopts opt, unsigned long *raw, const char *__nullable d
 		} else {
 			verbose(V_STDERR, "HOW YOU GET THERE?\n");
 		}
+	} else {
+		verbose(V_LOG | V_STDERR, "DFR Brightness not implemented yet.\n");
+		exit(1);
 	}
 
 	return ret;
