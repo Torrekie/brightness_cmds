@@ -75,12 +75,6 @@ bool is_decimal_num(const char *str)
 {
 	if (*str == '\0') return false;
 
-	if (*str == '+' || *str == '-') {
-		str++;
-	}
-
-	if (*str == '\0') return false;
-
 	while (*str) {
 		if (!isdigit(*str)) {
 			return false;
@@ -94,12 +88,12 @@ bool is_decimal_num(const char *str)
 /* This is really terrible */
 cmdsubopts getcmdsubopt(const char *str)
 {
-	cmdsubopts ret;
+	cmdsubopts ret = 0;
 
 	size_t size = strlen(str);
-	if (size != 3 || size != 6) {
+	if (size != 3 && size != 6) {
 		verbose(V_DEBUG | V_DBGMSG, "\"%s\" is not a SUBOPT\n", str);
-		return -1;
+		return ret;
 	}
 
 	if (size >= 3) {
@@ -125,17 +119,18 @@ int verbose(int level, const char *fmt, ...)
 	int ret;
 	FILE *f = stdout;
 
-	if ((verbosity & 0xF) < level)
+	if ((verbosity & 0xF) < (level & 0xF))
 		return 0;
-	if (verbosity & V_STDERR) {
+
+	if (level & V_STDERR) {
 		f = stderr;
 		ret = fprintf(f, "%s: ", argv0);
 	}
-	if (verbosity & V_WARN) {
+	if (level & V_WARN) {
 		f = stderr;
 		ret = fprintf(f, "WARNING: ");
 	}
-	if (verbosity & V_DBGMSG) {
+	if (level & V_DBGMSG) {
 		ret = fprintf(f, "DEBUG: ");
 	}
 
@@ -161,7 +156,7 @@ void print_help(cmdopts opt)
 			verbose(V_LOG, "     keyboard     (Keyboard backlight)\n");
 			verbose(V_LOG, "     flashlight   (LED Flash)\n");
 			verbose(V_LOG, "\n");
-			verbose(V_LOG, "%s <verb> with no options will provide light percentage on that verb", argv0);
+			verbose(V_LOG, "%s <verb> with no options will provide light percentage on that verb\n", argv0);
 		} else if (verbosity < 0 || verbosity > 3) {
 			verbose(V_QUIET | V_WARN, "No help for verbosity '%d'.\n", verbosity);
 		} else {
@@ -197,6 +192,16 @@ int main(int argc, char *argv[])
 	cmdopts opt = -1;
 	verbosity = 1;
 
+#ifdef DEBUG
+	if (getenv("VERBOSITY")) {
+		verbosity = (int)strtol(getenv("VERBOSITY"), (char **)NULL, 10);
+		/* Make sure 0 < verbosity < 0x10 */
+		verbosity = (verbosity >= 0xF) ? 0xF : ((verbosity <= 0) ? 0 : verbosity);
+		verbose(verbosity, "Env Verbosity: %d\n", verbosity);
+	}
+#endif
+	verbose(V_DEBUG | V_DBGMSG, "argc: %d\n", argc);
+
 	if (argv[0])
 		argv0 = argv[0];
 	else
@@ -204,8 +209,20 @@ int main(int argc, char *argv[])
 
 	/* While `brightutil` only, defaulting to `brightutil backlight get nits primary` */
 	if (argc < 2) {
-		out_nits = true;
-		backlight_avail = backlight_ctrl(SUBOPT_GET, &raw, display);
+default_out:
+                verbose(4, "No further args specified, goto default output.\n");
+		out_percent = true;
+		subopt = SUBOPT_GET | SUBOPT_MAX;
+		backlight_avail = backlight_ctrl(subopt, &rawmax, display);
+		if (backlight_avail) {
+			verbose(V_DEBUG | V_DBGMSG, "Got max brightness (%lu) of display \"%s\".\n", rawmax, (display) ? display : "0");
+		} else {
+			verbose(V_DEBUG | V_DBGMSG, "Cannot get max brightness of display \"%s\".\n", (display) ? display : "0");
+			exit(1);
+		}
+
+		subopt = SUBOPT_GET;
+		backlight_avail = backlight_ctrl(subopt, &raw, display);
 		goto output_now;
 	}
 
@@ -226,6 +243,7 @@ int main(int argc, char *argv[])
 				break;
 			cases("debug")
 				verbosity = 3;
+				verbose(V_DEBUG, "argv[%d]: %s\n", i, argv[i]);
 				i++;
 				break;
 			cases("h")
@@ -249,9 +267,9 @@ int main(int argc, char *argv[])
 		} switchs_end;
 
 		/* Step 2: Check if argv[i] is control verbs, i=3 while verbosity specified at argv[2] */
-		if (!argv[i]) {
+		if (!argv[i] || i >= argc) {
 			/* `brightutil [verbosity]` only, equals `brightutil [verbosity] backlight get nits primary` */
-			opt = CMD_BACKLIGHT;
+			goto default_out;
 		} else {
 			/* `brightutil [verbosity] [b|k|f] ...` or `brightutil [verbosity] help`. Later shows help info for [verbosity] */
 			switchs(argv[i]) {
@@ -287,18 +305,19 @@ int main(int argc, char *argv[])
 		}
 
 		/* Step 3.1: Handle `brightutil [verbosity] <verb> help` */
-		switchs(argv[i]) {
-			cases("h")
-			cases("help")
-			cases("-h")
-			cases("-help")
-			cases("--h")
-			cases("--help")
-				print_help(opt);
-				exit(1);
-			defaults
-		} switchs_end;
-
+		if (argv[i] && i < argc) {
+			switchs(argv[i]) {
+				cases("h")
+				cases("help")
+				cases("-h")
+				cases("-help")
+				cases("--h")
+				cases("--help")
+					print_help(opt);
+					exit(1);
+				defaults
+			} switchs_end;
+		}
 
 		/* Step 3.2: Parse <verb> specific options */
 		switch (opt) {
@@ -306,11 +325,8 @@ int main(int argc, char *argv[])
 			case CMD_BACKLIGHT:
 				/* `brightutil [verbosity] backlight` */
 				if (!argv[i]) {
-					backlight_avail = backlight_ctrl(SUBOPT_GET, &raw, NULL);
-					out_nits = true;
-					goto output_now;
+					goto default_out;
 				}
-
 				/* if next option is not [get|set][min|max], defaulting to 'get' mode */
 				subopt = getcmdsubopt(argv[i]);
 				if (subopt == 0) {
@@ -320,7 +336,7 @@ int main(int argc, char *argv[])
 				{
 					i++;
 
-					if ((subopt & SUBOPT_SET) && !argv[i]) {
+					if ((subopt & SUBOPT_SET) && (!argv[i] || i >= argc)) {
 						verbose(V_LOG | V_STDERR, "no value specified for option \"%s\"; type \"%s backlight help\" for usage\n", argv[i - 1], argv0);
 						exit(1);
 					}
@@ -332,10 +348,14 @@ int main(int argc, char *argv[])
 				 * Nits: Raw * (2 ^ -16)
 				 * Millinits: Nits * 1000.0
 				 */
-				out_percent = (strcmp(argv[i], "percent") == 0 || strcmp(argv[i], "%") == 0);
-				out_nits = (strcmp(argv[i], "nits") == 0 || strcmp(argv[i], "nt") == 0) ;
-				out_millinits = (strcmp(argv[i], "millinits") == 0 || strcmp(argv[i], "mnt") == 0);
-				out_raw = (strcmp(argv[i], "raw") == 0 || strcmp(argv[i], "value") == 0);
+				if (!argv[i] || i >= argc) {
+					/* `brightutil [verbosity] backlight [get|set][min|max]` */
+				} else {
+					out_percent = (strcmp(argv[i], "percent") == 0 || strcmp(argv[i], "%") == 0);
+					out_nits = (strcmp(argv[i], "nits") == 0 || strcmp(argv[i], "nt") == 0) ;
+					out_millinits = (strcmp(argv[i], "millinits") == 0 || strcmp(argv[i], "mnt") == 0);
+					out_raw = (strcmp(argv[i], "raw") == 0 || strcmp(argv[i], "value") == 0);
+				}
 				dcp = backlight_dcp();
 
 				if (!dcp && (out_nits || out_millinits)) {
@@ -344,14 +364,13 @@ int main(int argc, char *argv[])
 				}
 				if (!(out_percent || out_nits || out_millinits || out_raw)) {
 					/* `brightutil [verbosity] backlight [get|set][min|max] ... */
-					verbose(V_DEBUG | V_DBGMSG, "No %sput format option specified, defaulting to %s.\n", (subopt & SUBOPT_SET) ? "in" : "out", dcp ? "nits" : "percentage");
-					out_percent = !dcp;
+					verbose(V_DEBUG | V_DBGMSG, "No %sput format option specified, defaulting to percentage.\n", (subopt & SUBOPT_SET) ? "in" : "out");
+					out_percent = true;
 				} else {
 					/* `brightutil [verbosity] backlight [set][min|max] [percent|nits|millinits] */
 					verbose(V_DEBUG | V_DBGMSG, "Specified %sput value format \"%s\".\n", (subopt & SUBOPT_SET) ? "in" : "out", argv[i]);
 					i++;
 				}
-
 				/* `brightutil [verbosity] backlight [set][min|max] [percent|nits|millinits] [value] [displayID]` */
 				if ((subopt & SUBOPT_SET) && is_valid_value(argv[i], &percent, &val)) {
 					/* we can't check how exact input type by just is_valid_value() */
@@ -396,7 +415,7 @@ int main(int argc, char *argv[])
 						backlight_avail = backlight_ctrl(SUBOPT_GET, &cur, display);
 					}
 					/* Process input value */
-					if (backlight_avail) {
+					if (backlight_avail || leading_sign == 0) {
 						/* Convert Nits/MilliNits to raw value */
 						if (out_nits) val = val / pow(2, -16);
 						if (out_millinits) val = val / pow(2, -16) / 1000.0;
@@ -413,9 +432,9 @@ int main(int argc, char *argv[])
 				else if (subopt & SUBOPT_GET) {
 					/* TODO: reduce repeating codes */
 					/* Check if displayID specified */
-					if (argv[i + 1]) {
-						verbose(V_VERBOSE, "Specified displayID \"%s\".\n", argv[i + 1]);
-						display = argv[i + 1];
+					if (i < argc) {
+						verbose(V_VERBOSE, "Specified displayID \"%s\".\n", argv[i]);
+						display = argv[i];
 					}
 					/* While specified percentage, we have to know how much is 100% */
 					if (out_percent) {
@@ -435,12 +454,13 @@ output_now:
 					if (subopt & SUBOPT_GET) {
 						if (out_nits) verbose(V_LOG, "%.2f\n", (double)(int)raw * pow(2, -16));
 						/* MilliNits is stored as integer inside AppleARMBacklight */
-						if (out_millinits || out_raw) verbose(V_LOG, "%ld\n", (unsigned long)raw * pow(2, -16) * 1000.0);
-						if (out_percent) verbose(V_LOG, "%.2f\n", (raw / rawmax) * 100.0);
+						if (out_millinits) verbose(V_LOG, "%ld\n", lrint(raw * pow(2, -16) * 1000.0));
+						if (out_percent) verbose(V_LOG, "%.2f\n", (float)raw / rawmax * 100.0);
+						if (out_raw) verbose(V_LOG, "%ld\n", raw);
 					}
 					if (subopt & SUBOPT_SET) {
-						if (out_nits || out_percent) verbose(V_VERBOSE, "Set: %c%.2f%s\n", leading_sign, out_nits ? ((double)(int)raw * pow(2, -16)) : ((double)(int)rawmax * (percent / 100.0)), out_nits ? " nits" : "%");
-						if (out_millinits || out_raw) verbose(V_VERBOSE, "Set: %c%lu%s\n", leading_sign, (unsigned long)lrint((double)(int)raw * pow(2, -16) * 1000.0), out_millinits ? " millinits" : "");
+						if (out_nits || out_percent) verbose(V_VERBOSE, "Set: %.2f%s\n", out_nits ? ((double)(int)raw * pow(2, -16)) : ((float)raw / rawmax * 100.0), out_nits ? " nits" : "%");
+						if (out_millinits || out_raw) verbose(V_VERBOSE, "Set: %lu%s\n", out_millinits ? lrint(raw * pow(2, -16) * 1000.0) : raw, out_millinits ? " millinits" : "");
 					}
 				}
 
