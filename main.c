@@ -166,7 +166,7 @@ void print_help(cmdopts opt)
 		}
 	} else if (opt == CMD_BACKLIGHT) {
 		verbose(V_LOG, "Usage:   %s backlight [get[max|min]|set] [percent|nits|millinits] [value] [displayID]\n", argv0);
-		verbose(V_LOG, "Get/Set backlight value, getting main display brightness percent if not specified get/set and later options. While setting values, it can be directly specified as raw values which in nits, or appending a % to set as percent while no [percent|nits|millinits] specified before [value]. While getting values, [value] is not considered as an option. DFR brightness devices cannot set nits/millinits.");
+		verbose(V_LOG, "Get/Set backlight value, getting main display brightness percent if not specified get/set and later options. While setting values, it can be directly specified as raw values which in nits, or appending a % to set as percent while no [percent|nits|millinits] specified before [value]. While getting values, [value] is not considered as an option. DFR brightness devices cannot set nits/millinits.\n");
 	} else if (opt == CMD_KBDLIGHT) {
 		verbose(V_LOG, "Usage:   %s keyboard [get[max|min]|set] [value] [keyboardID]\n", argv0);
 		verbose(V_LOG, "Get/Set keyboard backlight value, getting builtin keyboard brightness percent if not specified get/set and later options.\n");
