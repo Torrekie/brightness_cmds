@@ -7,6 +7,8 @@
 //#include <Foundation/Foundation.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <arm_neon.h>
+
 #include "common.h"
 
 /* IOMobileFramebuffer.framework */
@@ -19,10 +21,34 @@ static io_service_t (*IOMobileFramebufferGetServiceObject)(IOMobileFramebuffer f
 
 /* backlight.m */
 static io_service_t initIOMFB(const char *__nullable display);
+static IOReturn set_value(io_service_t service, void *keys, void *values);
 bool backlight_dcp(void);
 bool backlight_ctrl(cmdsubopts opt, unsigned long *raw, const char *__nullable display);
 
 static int is_dcp = -1;
+
+static IOReturn set_value(io_service_t service, void *keys, void *values)
+{
+	IOReturn ret = kIOReturnError;
+	kern_return_t kr;
+
+	CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault,
+						  (const void **)&keys,
+						  (const void **)&values,
+						  1,
+						  &kCFTypeDictionaryKeyCallBacks,
+						  &kCFTypeDictionaryValueCallBacks);
+	if (!dict) return kIOReturnNoMemory;
+
+	kr = IORegistryEntrySetCFProperties(service, dict);
+	if (kr != KERN_SUCCESS)
+		verbose(V_LOG | V_STDERR, "IORegistryEntrySetCFProperties(0x%x)\n", kr);
+	else
+		ret = kIOReturnSuccess;
+
+	CFRelease(dict);
+	return ret;
+}
 
 static io_service_t initIOMFB(const char *__nullable display)
 {
@@ -208,6 +234,7 @@ bool backlight_ctrl(cmdsubopts opt, unsigned long *raw, const char *__nullable d
 			}
 		} else if (opt & SUBOPT_SET) {
 			if ((opt & SUBOPT_MIN) || (opt & SUBOPT_MAX)) {
+unimplemented_minmax:
 				/* TODO: Try to set IODisplayParameters or IOMFB */
 				verbose(V_LOG | V_STDERR, "Setting Min/Max is not implemented yet.\n");
 				exit(1);
@@ -228,16 +255,16 @@ bool backlight_ctrl(cmdsubopts opt, unsigned long *raw, const char *__nullable d
 		} else {
 			verbose(V_STDERR, "HOW YOU GET THERE?\n");
 		}
-	} else {
-		verbose(V_LOG | V_STDERR, "DFR Brightness not implemented yet.\n");
-		exit(1);
 	}
-
-	return ret;
-}
-
-#if 0
+	/* DFR Brightness */
 	else {
+		verbose(V_LOG | V_STDERR, "DFR Brightness untested yet.\n");
+
+		CFStringRef key;
+		CFDictionaryRef props, value;
+		io_iterator_t iterator;
+		io_service_t service;
+
 		key = CFSTR("backlight-control");
 		props = CFDictionaryCreate(kCFAllocatorDefault,
 					   (void *)&key,
@@ -254,32 +281,108 @@ bool backlight_ctrl(cmdsubopts opt, unsigned long *raw, const char *__nullable d
 					   &kCFTypeDictionaryKeyCallBacks,
 					   &kCFTypeDictionaryValueCallBacks);
 
-		service = IOServiceGetMatchingService(kIOMasterPortDefault, value);
-		if (service) {
-			param = (CFDictionaryRef)IORegistryEntryCreateCFProperty(service,
-										 CFSTR("IODisplayParameters"),
-										 kCFAllocatorDefault,
-										 kNilOptions);
-			if (!param) {
-				fprintf(stderr, "can't allocate memory\n");
-				goto done;
+		// CFRelease(props);
+
+		int displayID = 1;
+		if (display) {
+			CFStringRef cfstr;
+			verbose(V_VERBOSE, "Specified display: %s\n", display);
+			if (is_decimal_num(display)) {
+				/* display ID */
+				displayID = atoi(display);
+				if ((unsigned int)(displayID - 1) > 1 ) {
+					verbose(V_DEBUG | V_DBGMSG, "Invalid displayID (%s); Fallback to internal display (displayID:1).\n", display);
+					displayID = 1;
+				}
+			} else {
+				/* display name */
+				if (strcmp("internal", display) == 0 || strcmp("default", display) || strcmp("backlight", display) == 0 || strcmp("backlight-dfr", display) == 0)
+					displayID = 1;
+				else if (strcmp("DFR", display) == 0 || strcmp("dfr", display) == 0)
+					displayID = 2;
+				else
+					verbose(V_DEBUG | V_DBGMSG, "Invalid display name (%s); Fallback to internal display (displayID:1).\n", display);
 			}
 
-			brightness = CFDictionaryGetValue(param, CFSTR("brightness"));
-			if (!brightness) goto done;
+		} else {
+			verbose(V_DEBUG | V_DBGMSG, "displayID unspecified, getting internal display\n");
+		}
 
-			if ((number = CFDictionaryGetValue(brightness, CFSTR("value"))))
-				CFNumberGetValue(number, kCFNumberSInt32Type, &cur);
+		if (IOServiceGetMatchingServices(kIOMasterPortDefault, value, &iterator) == KERN_SUCCESS) {
+			if (iterator) {
+				UInt8 buffer[4];
+				CFDataRef dfr_control_bits;
+				CFDictionaryRef IODisplayParameters = NULL;
+				CFDictionaryRef brightness = NULL;
+				unsigned int f64, i = 0;
 
-			if ((number = CFDictionaryGetValue(brightness, CFSTR("min"))))
-				CFNumberGetValue(number, kCFNumberSInt32Type, &min);
+				while ((service = IOIteratorNext(iterator))) {
+					dfr_control_bits = IORegistryEntrySearchCFProperty(service,
+											   kIOServicePlane,
+											   CFSTR("dfr-brightness-control"),
+											   kCFAllocatorDefault,
+											   kIORegistryIterateRecursively | kIORegistryIterateParents);
+					if (dfr_control_bits) {
+						CFDataGetBytes(dfr_control_bits, CFRangeMake(0, 4), buffer);
+						CFRelease(dfr_control_bits);
+					}
 
-			if ((number = CFDictionaryGetValue(brightness, CFSTR("max"))))
-				CFNumberGetValue(number, kCFNumberSInt32Type, &max);
+					if ((displayID == 2 && (UInt32 *)buffer != 0) || (displayID == 1 && (UInt32 *)buffer == 0)) {
+						/* TODO: Make a function for parsing IODisplayParameters */
+						IODisplayParameters = IORegistryEntryCreateCFProperty(service,
+												      CFSTR("IODisplayParameters"),
+												      kCFAllocatorDefault,
+												      kNilOptions);
+						if (!IODisplayParameters) {
+							verbose(V_LOG | V_STDERR, "Cannot allocate memory.\n");
+							exit(1);
+						}
 
-			/* DFR has max value 65536 (2 ^ 16), which should output the pct */
-			printf("%.6f", (double)cur * pow(2, -16));
-			// printf("Current: %lld, Min: %lld, Max: %lld\n", cur, min, max);
+						if (opt & SUBOPT_MAX) {
+							key = CFSTR("brightness-nits-max");
+							if ((opt & SUBOPT_GET) && (number = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, kNilOptions)))
+								CFNumberGetValue(number, kCFNumberSInt32Type, &max);
+							*raw = max;
+						} else if (opt & SUBOPT_MIN) {
+							/* DFR does not provide a minimum nits value */
+							min = 0;
+							*raw = min;
+						} else {
+							key = CFSTR("brightness-nits");
+							if ((opt & SUBOPT_GET) && (number = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, kNilOptions)))
+								CFNumberGetValue(number, kCFNumberSInt32Type, &cur);
+							*raw = cur;
+						}
+						if (opt & SUBOPT_SET) {
+							if (opt & SUBOPT_MAX || opt & SUBOPT_MIN) {
+								goto unimplemented_minmax;
+							}
+
+							f64 = vcvtd_n_s64_f64(rint(*raw), 10); // TODO: Replace this with portable code
+							number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &f64);
+							kr = set_value(service, &key, &number);
+							if (kr != KERN_SUCCESS) {
+								verbose(V_LOG | V_STDERR, "Unable to set value (%s).\n", mach_error_string(kr));
+								exit(1);
+							}
+						}
+						i++;
+					}
+				}
+				if (i == 0) {
+					verbose(V_LOG | V_STDERR, "No entries under display \"%s\"\n", display);
+					exit(1);
+				}
+			} else {
+				verbose(V_LOG | V_STDERR, "Cannot open display \"%s\"\n", display);
+				exit(1);
+			}
+		} else {
+			/* TODO: Get/Set by BrightnessControl.framework */
+			verbose(V_LOG | V_STDERR, "Neither DCP nor DFR detected, not sure what brightness backend this device using.\n");
+			exit(1);
 		}
 	}
-#endif
+
+	return ret;
+}
