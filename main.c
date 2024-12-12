@@ -166,7 +166,7 @@ void print_help(cmdopts opt)
 		}
 	} else if (opt == CMD_BACKLIGHT) {
 		verbose(V_LOG, "Usage:   %s backlight [get[max|min]|set] [percent|nits|millinits] [value] [displayID]\n", argv0);
-		verbose(V_LOG, "Get/Set backlight value, getting main display brightness percent if not specified get/set and later options. While setting values, it can be directly specified as raw values which in nits, or appending a % to set as percent while no [percent|nits|millinits] specified before [value]. While getting values, [value] is not considered as an option. DFR brightness devices cannot set nits/millinits.\n");
+		verbose(V_LOG, "Get/Set backlight value, getting main display brightness percent if not specified get/set and later options. While setting values, it can be directly specified as raw values which in nits, or appending a % to set as percent while no [percent|nits|millinits] specified before [value]. While getting values, [value] is not considered as an option.\n");
 	} else if (opt == CMD_KBDLIGHT) {
 		verbose(V_LOG, "Usage:   %s keyboard [get[max|min]|set] [value] [keyboardID]\n", argv0);
 		verbose(V_LOG, "Get/Set keyboard backlight value, getting builtin keyboard brightness percent if not specified get/set and later options.\n");
@@ -358,7 +358,8 @@ default_out:
 				}
 				dcp = backlight_dcp();
 
-				if (!dcp && (out_nits || out_millinits)) {
+				/* TODO: DFR returns Nits instead of raw value, but I don't have device to test it */
+				if (!dcp && out_raw) {
 					verbose(V_LOG | V_STDERR, "DFR Brightness does not support setting \"%s\", use \"percent\" instead.\n", argv[i]);
 					exit(1);
 				}

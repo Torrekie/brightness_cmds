@@ -6,7 +6,8 @@ Utility commands for communicating with CoreBrightness.
 - and more (i guess)
 
 ## Debug Tools
-- `tools/display_inspect`: Developer tool for inspecting all properties of current display
+- `tools/display_inspect`: inspecting all properties of current display
+- `tools/display_stat`: simple example program for checking if display is active
 
 ## Build
 

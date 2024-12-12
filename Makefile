@@ -1,5 +1,7 @@
 .PHONY: clean
 
+PREFIX := /usr/local
+
 TARGET := arm64-apple-ios13.0
 SDKROOT := $(shell xcrun -sdk iphoneos --show-sdk-path)
 
@@ -17,7 +19,11 @@ brightutil:
 	$(CC) -isysroot $(SDKROOT) -target $(TARGET) -fobjc-arc $(CFLAGS) main.c backlight.c -o brightutil $(LDFLAGS) -framework CoreFoundation -framework IOKit
 	$(CODESIGN) $(ENTARG)brightness.entitlements brightutil
 
-all: getbrt
+all: brightutil
+
+install:
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m755 brightutil $(DESTDIR)$(PREFIX)/bin/brightutil
 
 clean:
 	rm -f *.o
